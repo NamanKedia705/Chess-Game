@@ -1,0 +1,1404 @@
+##Imports
+import pygame
+from openai import OpenAI
+
+#Initialize
+pygame.init()
+client = OpenAI()
+
+#Constants / Window settings
+
+WIDTH = 800
+HEIGHT = 800
+
+BOARD_SIZE = 640
+SQUARE_SIZE = BOARD_SIZE // 8
+
+BOARD_X = (WIDTH - BOARD_SIZE) // 2
+BOARD_Y = (HEIGHT - BOARD_SIZE) // 2
+
+BACKGROUND = (35, 35, 35)
+LIGHT_SQUARE = (238, 238, 210)
+DARK_SQUARE = (118, 150, 86)
+TEXT_COLOR = (230, 230, 230)
+
+SELECTED_COLOR = (246, 246, 105)
+MOVE_DOT_COLOR = (50, 50, 50)
+
+WHITE_PIECES = "♙♖♘♗♕♔"
+BLACK_PIECES = "♟♜♞♝♛♚"
+
+## Pygame objects
+
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Chess")
+
+clock = pygame.time.Clock()
+
+piece_font = pygame.font.SysFont("segoeuisymbol", 58)
+coordinate_font = pygame.font.SysFont("arial", 22)
+status_font = pygame.font.SysFont("arial", 26, bold=True)
+button_font = pygame.font.SysFont("arial", 20, bold=True)
+
+## Buttons
+restart_button = pygame.Rect(560, 20, 100, 40)
+forfeit_button = pygame.Rect(670, 20, 100, 40)
+
+## Game state
+
+pieces = [
+    ["♜", "♞", "♝", "♛", "♚", "♝", "♞", "♜"],
+    ["♟", "♟", "♟", "♟", "♟", "♟", "♟", "♟"],
+    ["",   "",   "",   "",   "",   "",   "",   ""],
+    ["",   "",   "",   "",   "",   "",   "",   ""],
+    ["",   "",   "",   "",   "",   "",   "",   ""],
+    ["",   "",   "",   "",   "",   "",   "",   ""],
+    ["♙", "♙", "♙", "♙", "♙", "♙", "♙", "♙"],
+    ["♖", "♘", "♗", "♕", "♔", "♗", "♘", "♖"]
+]
+
+selected_square = None
+possible_moves = []
+
+current_turn = "white"
+
+en_passant_target = None
+
+white_king_moved = False
+black_king_moved = False
+
+white_left_rook_moved = False
+white_right_rook_moved = False
+
+black_left_rook_moved = False
+black_right_rook_moved = False
+
+promotion_pending = False
+promotion_square = None
+promotion_is_white = True
+
+game_over = False
+game_message = "White to move"
+
+# Draw functions
+def draw_board():
+
+    for row in range(8):
+        for col in range(8):
+
+            # Alternate colours
+            if (row + col) % 2 == 0:
+                colour = LIGHT_SQUARE
+            else:
+                colour = DARK_SQUARE
+
+            x = BOARD_X + col * SQUARE_SIZE
+            y = BOARD_Y + row * SQUARE_SIZE
+
+            pygame.draw.rect(
+                screen,
+                colour,
+                (x, y, SQUARE_SIZE, SQUARE_SIZE)
+            )
+def draw_pieces():
+
+    for row in range(8):
+        for col in range(8):
+
+            piece = pieces[row][col]
+
+            if piece == "":
+                continue
+
+            x = (
+                BOARD_X
+                + col * SQUARE_SIZE
+                + SQUARE_SIZE // 2
+            )
+
+            y = (
+                BOARD_Y
+                + row * SQUARE_SIZE
+                + SQUARE_SIZE // 2
+            )
+
+            # WHITE PIECES
+            if piece in "♙♖♘♗♕♔":
+
+                main_colour = (245, 245, 245)
+                outline_colour = (30, 30, 30)
+
+                # Draw dark outline
+                for offset_x, offset_y in [
+                    (-2, 0),
+                    (2, 0),
+                    (0, -2),
+                    (0, 2)
+                ]:
+
+                    outline = piece_font.render(
+                        piece,
+                        True,
+                        outline_colour
+                    )
+
+                    outline_rect = outline.get_rect(
+                        center=(x + offset_x, y + offset_y)
+                    )
+
+                    screen.blit(outline, outline_rect)
+
+                # Draw white piece
+                text = piece_font.render(
+                    piece,
+                    True,
+                    main_colour
+                )
+
+            # BLACK PIECES — no outline
+            else:
+
+                text = piece_font.render(
+                    piece,
+                    True,
+                    (25, 25, 25)
+                )
+
+            text_rect = text.get_rect(
+                center=(x, y)
+            )
+
+            screen.blit(text, text_rect)
+def draw_buttons():
+
+    pygame.draw.rect(screen, (70, 70, 70), restart_button, border_radius=8)
+    pygame.draw.rect(screen, (70, 70, 70), forfeit_button, border_radius=8)
+
+    restart_text = button_font.render("Restart", True, TEXT_COLOR)
+    forfeit_text = button_font.render("Forfeit", True, TEXT_COLOR)
+
+    screen.blit(
+        restart_text,
+        restart_text.get_rect(center=restart_button.center)
+    )
+
+    screen.blit(
+        forfeit_text,
+        forfeit_text.get_rect(center=forfeit_button.center)
+    )
+def draw_coordinates():
+
+    # Letters a-h
+    letters = "abcdefgh"
+
+    for col in range(8):
+
+        text = coordinate_font.render(
+            letters[col],
+            True,
+            TEXT_COLOR
+        )
+
+        x = (
+            BOARD_X
+            + col * SQUARE_SIZE
+            + SQUARE_SIZE // 2
+            - text.get_width() // 2
+        )
+
+        y = BOARD_Y + BOARD_SIZE + 10
+
+        screen.blit(text, (x, y))
+
+    # Numbers 8-1
+    for row in range(8):
+
+        number = str(8 - row)
+
+        text = coordinate_font.render(
+            number,
+            True,
+            TEXT_COLOR
+        )
+
+        x = BOARD_X - 30
+
+        y = (
+            BOARD_Y
+            + row * SQUARE_SIZE
+            + SQUARE_SIZE // 2
+            - text.get_height() // 2
+        )
+
+        screen.blit(text, (x, y))
+def draw_selection():
+
+    if selected_square is None:
+        return
+
+    row, col = selected_square
+
+    highlight = pygame.Surface(
+        (SQUARE_SIZE, SQUARE_SIZE),
+        pygame.SRCALPHA
+    )
+
+    highlight.fill((*SELECTED_COLOR, 120))
+
+    screen.blit(
+        highlight,
+        (
+            BOARD_X + col * SQUARE_SIZE,
+            BOARD_Y + row * SQUARE_SIZE
+        )
+    )
+def draw_possible_moves():
+
+    for row, col in possible_moves:
+
+        center_x = (
+            BOARD_X
+            + col * SQUARE_SIZE
+            + SQUARE_SIZE // 2
+        )
+
+        center_y = (
+            BOARD_Y
+            + row * SQUARE_SIZE
+            + SQUARE_SIZE // 2
+        )
+
+        pygame.draw.circle(
+            screen,
+            MOVE_DOT_COLOR,
+            (center_x, center_y),
+            10
+        )
+def draw_game_status():
+
+    if game_message == "":
+        text_string = "White to move"
+    else:
+        text_string = game_message
+
+    text = status_font.render(
+        text_string,
+        True,
+        TEXT_COLOR
+    )
+
+    x = WIDTH // 2 - text.get_width() // 2
+    y = 25
+
+    screen.blit(text, (x, y))
+def handle_click(pos):
+
+    global selected_square
+    global possible_moves
+    global en_passant_target
+    global current_turn
+
+    global white_king_moved
+    global black_king_moved
+    global white_left_rook_moved
+    global white_right_rook_moved
+    global black_left_rook_moved
+    global black_right_rook_moved
+
+    global promotion_pending
+    global promotion_square
+    global promotion_is_white
+    global game_over
+
+    if game_over:
+        return
+    mouse_x, mouse_y = pos
+
+    # Click outside board
+    if not (
+        BOARD_X <= mouse_x < BOARD_X + BOARD_SIZE
+        and BOARD_Y <= mouse_y < BOARD_Y + BOARD_SIZE
+    ):
+        selected_square = None
+        possible_moves = []
+        return
+
+    col = (mouse_x - BOARD_X) // SQUARE_SIZE
+    row = (mouse_y - BOARD_Y) // SQUARE_SIZE
+
+    clicked_square = (row, col)
+
+    # --------------------------------
+    # MOVE SELECTED PIECE
+    # --------------------------------
+    if selected_square is not None and clicked_square in possible_moves:
+
+        old_row, old_col = selected_square
+        moving_piece = pieces[old_row][old_col]
+
+        old_en_passant_target = en_passant_target
+        en_passant_target = None
+
+        # -----------------------------
+        # CASTLING
+        # -----------------------------
+
+        # White kingside
+        if (
+            moving_piece == "♔"
+            and (old_row, old_col) == (7, 4)
+            and (row, col) == (7, 6)
+        ):
+            pieces[7][6] = "♔"
+            pieces[7][5] = "♖"
+            pieces[7][4] = ""
+            pieces[7][7] = ""
+
+            white_king_moved = True
+            white_right_rook_moved = True
+
+        # White queenside
+        elif (
+            moving_piece == "♔"
+            and (old_row, old_col) == (7, 4)
+            and (row, col) == (7, 2)
+        ):
+            pieces[7][2] = "♔"
+            pieces[7][3] = "♖"
+            pieces[7][4] = ""
+            pieces[7][0] = ""
+
+            white_king_moved = True
+            white_left_rook_moved = True
+
+        # Black kingside
+        elif (
+            moving_piece == "♚"
+            and (old_row, old_col) == (0, 4)
+            and (row, col) == (0, 6)
+        ):
+            pieces[0][6] = "♚"
+            pieces[0][5] = "♜"
+            pieces[0][4] = ""
+            pieces[0][7] = ""
+
+            black_king_moved = True
+            black_right_rook_moved = True
+
+        # Black queenside
+        elif (
+            moving_piece == "♚"
+            and (old_row, old_col) == (0, 4)
+            and (row, col) == (0, 2)
+        ):
+            pieces[0][2] = "♚"
+            pieces[0][3] = "♜"
+            pieces[0][4] = ""
+            pieces[0][0] = ""
+
+            black_king_moved = True
+            black_left_rook_moved = True
+
+        # -----------------------------
+        # NORMAL MOVE
+        # -----------------------------
+        else:
+
+            # EN PASSANT CAPTURE
+            if (
+                moving_piece in "♙♟"
+                and old_en_passant_target == (row, col)
+                and pieces[row][col] == ""
+                and old_col != col
+            ):
+                if moving_piece == "♙":
+                    pieces[row + 1][col] = ""
+                else:
+                    pieces[row - 1][col] = ""
+
+            # Move/capture
+            pieces[row][col] = moving_piece
+            pieces[old_row][old_col] = ""
+
+            # CREATE EN PASSANT TARGET
+            if moving_piece == "♙" and old_row == 6 and row == 4:
+                en_passant_target = (5, col)
+
+            elif moving_piece == "♟" and old_row == 1 and row == 3:
+                en_passant_target = (2, col)
+
+            # PAWN PROMOTION
+            if moving_piece == "♙" and row == 0:
+                promotion_pending = True
+                promotion_square = (row, col)
+                promotion_is_white = True
+
+            elif moving_piece == "♟" and row == 7:
+                promotion_pending = True
+                promotion_square = (row, col)
+                promotion_is_white = False
+
+            # RECORD KING / ROOK MOVEMENT
+            if moving_piece == "♔":
+                white_king_moved = True
+
+            elif moving_piece == "♚":
+                black_king_moved = True
+
+            elif moving_piece == "♖":
+                if old_row == 7 and old_col == 0:
+                    white_left_rook_moved = True
+
+                elif old_row == 7 and old_col == 7:
+                    white_right_rook_moved = True
+
+            elif moving_piece == "♜":
+                if old_row == 0 and old_col == 0:
+                    black_left_rook_moved = True
+
+                elif old_row == 0 and old_col == 7:
+                    black_right_rook_moved = True
+
+        # --------------------------------
+        # SWITCH TURN
+        # --------------------------------
+
+        # Don't switch yet if promotion menu is open
+        if not promotion_pending:
+
+            if current_turn == "white":
+                current_turn = "black"
+            else:
+                current_turn = "white"
+
+            update_game_state()
+
+        selected_square = None
+        possible_moves = []
+
+        return
+
+    # --------------------------------
+    # SELECT PIECE
+    # --------------------------------
+    if pieces[row][col] != "":
+
+        clicked_piece = pieces[row][col]
+
+        white_pieces = "♙♖♘♗♕♔"
+        black_pieces = "♟♜♞♝♛♚"
+
+        # Can't select opponent's piece
+        if current_turn == "white" and clicked_piece not in white_pieces:
+            return
+
+        if current_turn == "black" and clicked_piece not in black_pieces:
+            return
+
+        # Clicking same selected piece deselects it
+        if selected_square == clicked_square:
+
+            selected_square = None
+            possible_moves = []
+
+        else:
+
+            selected_square = clicked_square
+            possible_moves = get_possible_moves(row, col)
+
+    # --------------------------------
+    # CLICK EMPTY INVALID SQUARE
+    # --------------------------------
+    else:
+
+        selected_square = None
+        possible_moves = []
+def get_sliding_moves(row, col, directions, is_white):
+
+    moves = []
+
+    white_pieces = "♙♖♘♗♕♔"
+    black_pieces = "♟♜♞♝♛♚"
+
+    own_pieces = white_pieces if is_white else black_pieces
+    enemy_pieces = black_pieces if is_white else white_pieces
+
+    for row_change, col_change in directions:
+
+        new_row = row + row_change
+        new_col = col + col_change
+
+        while 0 <= new_row < 8 and 0 <= new_col < 8:
+
+            target = pieces[new_row][new_col]
+
+            # Empty square
+            if target == "":
+                moves.append((new_row, new_col))
+
+            # Enemy piece: can capture, then stop
+            elif target in enemy_pieces:
+                moves.append((new_row, new_col))
+                break
+
+            # Own piece: blocked
+            elif target in own_pieces:
+                break
+
+            new_row += row_change
+            new_col += col_change
+
+    return moves
+def find_king(board, is_white):
+
+    king = "♔" if is_white else "♚"
+
+    for row in range(8):
+        for col in range(8):
+
+            if board[row][col] == king:
+                return (row, col)
+
+    return None
+def is_square_attacked(board, row, col, by_white):
+
+    # --------------------------------
+    # PAWNS
+    # --------------------------------
+
+    if by_white:
+        pawn = "♙"
+
+        pawn_positions = [
+            (row + 1, col - 1),
+            (row + 1, col + 1)
+        ]
+
+    else:
+        pawn = "♟"
+
+        pawn_positions = [
+            (row - 1, col - 1),
+            (row - 1, col + 1)
+        ]
+
+    for r, c in pawn_positions:
+
+        if 0 <= r < 8 and 0 <= c < 8:
+
+            if board[r][c] == pawn:
+                return True
+
+    # --------------------------------
+    # KNIGHTS
+    # --------------------------------
+
+    knight = "♘" if by_white else "♞"
+
+    knight_moves = [
+        (-2, -1),
+        (-2, 1),
+        (-1, -2),
+        (-1, 2),
+        (1, -2),
+        (1, 2),
+        (2, -1),
+        (2, 1)
+    ]
+
+    for dr, dc in knight_moves:
+
+        r = row + dr
+        c = col + dc
+
+        if 0 <= r < 8 and 0 <= c < 8:
+
+            if board[r][c] == knight:
+                return True
+
+    # --------------------------------
+    # ROOK / QUEEN DIRECTIONS
+    # --------------------------------
+
+    rook = "♖" if by_white else "♜"
+    queen = "♕" if by_white else "♛"
+
+    straight_directions = [
+        (-1, 0),
+        (1, 0),
+        (0, -1),
+        (0, 1)
+    ]
+
+    for dr, dc in straight_directions:
+
+        r = row + dr
+        c = col + dc
+
+        while 0 <= r < 8 and 0 <= c < 8:
+
+            target = board[r][c]
+
+            if target != "":
+
+                if target == rook or target == queen:
+                    return True
+
+                break
+
+            r += dr
+            c += dc
+
+    # --------------------------------
+    # BISHOP / QUEEN DIRECTIONS
+    # --------------------------------
+
+    bishop = "♗" if by_white else "♝"
+
+    diagonal_directions = [
+        (-1, -1),
+        (-1, 1),
+        (1, -1),
+        (1, 1)
+    ]
+
+    for dr, dc in diagonal_directions:
+
+        r = row + dr
+        c = col + dc
+
+        while 0 <= r < 8 and 0 <= c < 8:
+
+            target = board[r][c]
+
+            if target != "":
+
+                if target == bishop or target == queen:
+                    return True
+
+                break
+
+            r += dr
+            c += dc
+
+    # --------------------------------
+    # KING
+    # --------------------------------
+
+    king = "♔" if by_white else "♚"
+
+    for dr in [-1, 0, 1]:
+        for dc in [-1, 0, 1]:
+
+            if dr == 0 and dc == 0:
+                continue
+
+            r = row + dr
+            c = col + dc
+
+            if 0 <= r < 8 and 0 <= c < 8:
+
+                if board[r][c] == king:
+                    return True
+
+    return False
+def is_in_check(board, is_white):
+
+    king_square = find_king(board, is_white)
+
+    if king_square is None:
+        return False
+
+    king_row, king_col = king_square
+
+    return is_square_attacked(
+        board,
+        king_row,
+        king_col,
+        not is_white
+    )
+def draw_promotion_menu():
+
+    if not promotion_pending:
+        return
+
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 140))
+    screen.blit(overlay, (0, 0))
+
+    menu_width = 420
+    menu_height = 150
+
+    menu_x = (WIDTH - menu_width) // 2
+    menu_y = (HEIGHT - menu_height) // 2
+
+    pygame.draw.rect(
+        screen,
+        (50, 50, 50),
+        (menu_x, menu_y, menu_width, menu_height),
+        border_radius=12
+    )
+
+    title_font = pygame.font.SysFont("arial", 24, bold=True)
+
+    title = title_font.render(
+        "Choose Promotion",
+        True,
+        (240, 240, 240)
+    )
+
+    screen.blit(
+        title,
+        (
+            WIDTH // 2 - title.get_width() // 2,
+            menu_y + 15
+        )
+    )
+
+    if promotion_is_white:
+        options = ["♕", "♖", "♗", "♘"]
+    else:
+        options = ["♛", "♜", "♝", "♞"]
+
+    start_x = menu_x + 40
+    button_y = menu_y + 60
+
+    for i, piece in enumerate(options):
+
+        button_x = start_x + i * 90
+
+        pygame.draw.rect(
+            screen,
+            (90, 90, 90),
+            (button_x, button_y, 70, 70),
+            border_radius=8
+        )
+
+        text = piece_font.render(
+            piece,
+            True,
+            (240, 240, 240)
+        )
+
+        rect = text.get_rect(
+            center=(button_x + 35, button_y + 35)
+        )
+
+        screen.blit(text, rect)
+def handle_promotion_click(pos):
+
+    global promotion_pending
+    global promotion_square
+    global current_turn
+
+    mouse_x, mouse_y = pos
+
+    menu_width = 420
+    menu_height = 150
+
+    menu_x = (WIDTH - menu_width) // 2
+    menu_y = (HEIGHT - menu_height) // 2
+
+    start_x = menu_x + 40
+    button_y = menu_y + 60
+
+    if promotion_is_white:
+        options = ["♕", "♖", "♗", "♘"]
+    else:
+        options = ["♛", "♜", "♝", "♞"]
+
+    for i, piece in enumerate(options):
+
+        button_x = start_x + i * 90
+
+        button_rect = pygame.Rect(
+            button_x,
+            button_y,
+            70,
+            70
+        )
+
+        if button_rect.collidepoint(mouse_x, mouse_y):
+
+            row, col = promotion_square
+
+            pieces[row][col] = piece
+
+            promotion_pending = False
+            promotion_square = None
+
+            # Switch turn AFTER choosing promotion piece
+            if current_turn == "white":
+                current_turn = "black"
+            else:
+                current_turn = "white"
+            update_game_state()
+            return
+def simulate_move(old_row, old_col, new_row, new_col):
+
+    # Copy board
+    new_board = [row[:] for row in pieces]
+
+    moving_piece = new_board[old_row][old_col]
+
+    # --------------------------------
+    # EN PASSANT
+    # --------------------------------
+
+    if (
+        moving_piece in "♙♟"
+        and en_passant_target == (new_row, new_col)
+        and new_board[new_row][new_col] == ""
+        and old_col != new_col
+    ):
+
+        if moving_piece == "♙":
+            new_board[new_row + 1][new_col] = ""
+
+        else:
+            new_board[new_row - 1][new_col] = ""
+
+    # Move piece
+    new_board[new_row][new_col] = moving_piece
+    new_board[old_row][old_col] = ""
+
+    # --------------------------------
+    # CASTLING
+    # --------------------------------
+
+    if moving_piece == "♔":
+
+        # White kingside
+        if (old_row, old_col) == (7, 4) and (new_row, new_col) == (7, 6):
+
+            new_board[7][5] = "♖"
+            new_board[7][7] = ""
+
+        # White queenside
+        elif (old_row, old_col) == (7, 4) and (new_row, new_col) == (7, 2):
+
+            new_board[7][3] = "♖"
+            new_board[7][0] = ""
+
+    elif moving_piece == "♚":
+
+        # Black kingside
+        if (old_row, old_col) == (0, 4) and (new_row, new_col) == (0, 6):
+
+            new_board[0][5] = "♜"
+            new_board[0][7] = ""
+
+        # Black queenside
+        elif (old_row, old_col) == (0, 4) and (new_row, new_col) == (0, 2):
+
+            new_board[0][3] = "♜"
+            new_board[0][0] = ""
+
+    return new_board
+def get_possible_moves(row, col):
+
+    piece = pieces[row][col]
+
+    if piece == "":
+        return []
+
+    is_white = piece in WHITE_PIECES
+
+    pseudo_moves = get_pseudo_moves(row, col)
+
+    legal_moves = []
+
+    for new_row, new_col in pseudo_moves:
+
+        target = pieces[new_row][new_col]
+
+        # Kings are never actually "captured"
+        if is_white and target == "♚":
+            continue
+
+        if not is_white and target == "♔":
+            continue
+
+        # --------------------------------
+        # SPECIAL CASTLING RULES
+        # --------------------------------
+
+        if piece in "♔♚" and abs(new_col - col) == 2:
+
+            # Cannot castle while currently in check
+            if is_in_check(pieces, is_white):
+                continue
+
+            # Square the king passes through
+            middle_col = col + 1 if new_col > col else col - 1
+
+            if is_square_attacked(
+                pieces,
+                row,
+                middle_col,
+                not is_white
+            ):
+                continue
+
+            # Destination cannot be attacked
+            if is_square_attacked(
+                pieces,
+                new_row,
+                new_col,
+                not is_white
+            ):
+                continue
+
+        # --------------------------------
+        # SIMULATE MOVE
+        # --------------------------------
+
+        simulated_board = simulate_move(
+            row,
+            col,
+            new_row,
+            new_col
+        )
+
+        # If our king is safe after the move,
+        # the move is legal
+        if not is_in_check(simulated_board, is_white):
+            legal_moves.append((new_row, new_col))
+
+    return legal_moves
+def has_legal_moves(is_white):
+
+    own_pieces = WHITE_PIECES if is_white else BLACK_PIECES
+
+    for row in range(8):
+        for col in range(8):
+
+            if pieces[row][col] in own_pieces:
+
+                moves = get_possible_moves(row, col)
+
+                if len(moves) > 0:
+                    return True
+
+    return False
+def get_game_state():
+
+    is_white = current_turn == "white"
+
+    in_check = is_in_check(pieces, is_white)
+
+    has_moves = has_legal_moves(is_white)
+
+    if not has_moves:
+
+        if in_check:
+
+            if is_white:
+                return "checkmate_black"
+
+            else:
+                return "checkmate_white"
+
+        else:
+            return "stalemate"
+
+    if in_check:
+        return "check"
+
+    return "playing"
+def update_game_state():
+
+    global game_over
+    global game_message
+
+    state = get_game_state()
+
+    if state == "checkmate_white":
+
+        game_over = True
+        game_message = "CHECKMATE - White wins!"
+
+    elif state == "checkmate_black":
+
+        game_over = True
+        game_message = "CHECKMATE - Black wins!"
+
+    elif state == "stalemate":
+
+        game_over = True
+        game_message = "STALEMATE - Draw"
+
+    elif state == "check":
+
+        if current_turn == "white":
+            game_message = "White to move - CHECK!"
+
+        else:
+            game_message = "Black to move - CHECK!"
+
+    else:
+
+        if current_turn == "white":
+            game_message = "White to move"
+
+        else:
+            game_message = "Black to move"
+def get_pseudo_moves(row, col):
+    global en_passant_target
+    moves = []
+
+    piece = pieces[row][col]
+
+    # -----------------------------
+    # WHITE PAWNS
+    # -----------------------------
+    if piece == "♙":
+
+        # Move forward one square
+        if row - 1 >= 0 and pieces[row - 1][col] == "":
+            moves.append((row - 1, col))
+
+            # Move forward two squares from starting position
+            if row == 6 and pieces[row - 2][col] == "":
+                moves.append((row - 2, col))
+
+        # White pawn captures
+        if row - 1 >= 0 and col - 1 >= 0:
+            target = pieces[row - 1][col - 1]
+
+            if target != "" and target in "♟♜♞♝♛♚":
+                moves.append((row - 1, col - 1))
+
+
+        if row - 1 >= 0 and col + 1 < 8:
+            target = pieces[row - 1][col + 1]
+
+            if target != "" and target in "♟♜♞♝♛♚":
+                moves.append((row - 1, col + 1))
+        # En passant
+        if en_passant_target is not None:
+
+            target_row, target_col = en_passant_target
+
+            if target_row == row - 1 and abs(target_col - col) == 1:
+                moves.append((target_row, target_col))
+
+    # -----------------------------
+    # BLACK PAWNS
+    # -----------------------------
+    elif piece == "♟":
+
+        if row + 1 < 8 and pieces[row + 1][col] == "":
+            moves.append((row + 1, col))
+
+            if row == 1 and pieces[row + 2][col] == "":
+                moves.append((row + 2, col))
+
+        # Black pawn captures
+        if row + 1 < 8 and col - 1 >= 0:
+            target = pieces[row + 1][col - 1]
+
+            if target != "" and target in "♙♖♘♗♕♔":
+                moves.append((row + 1, col - 1))
+
+
+        if row + 1 < 8 and col + 1 < 8:
+            target = pieces[row + 1][col + 1]
+
+            if target != "" and target in "♙♖♘♗♕♔":
+                moves.append((row + 1, col + 1))
+        # En passant
+        if en_passant_target is not None:
+
+            target_row, target_col = en_passant_target
+
+            if target_row == row + 1 and abs(target_col - col) == 1:
+                moves.append((target_row, target_col))
+    # -----------------------------
+    # KNIGHTS
+    # -----------------------------
+    elif piece in "♘♞":
+
+        knight_moves = [
+            (-2, -1),
+            (-2, 1),
+            (-1, -2),
+            (-1, 2),
+            (1, -2),
+            (1, 2),
+            (2, -1),
+            (2, 1)
+        ]
+
+        for row_change, col_change in knight_moves:
+
+            new_row = row + row_change
+            new_col = col + col_change
+
+            # Make sure square is on board
+            if 0 <= new_row < 8 and 0 <= new_col < 8:
+
+                target = pieces[new_row][new_col]
+
+                # White knight
+                if piece == "♘":
+                    if target == "" or target in "♟♜♞♝♛♚":
+                        moves.append((new_row, new_col))
+
+                # Black knight
+                else:
+                    if target == "" or target in "♙♖♘♗♕♔":
+                        moves.append((new_row, new_col))
+    # -----------------------------
+    # ROOKS
+    # -----------------------------
+    elif piece in "♖♜":
+
+        directions = [
+            (-1, 0),   # up
+            (1, 0),    # down
+            (0, -1),   # left
+            (0, 1)     # right
+        ]
+
+        moves += get_sliding_moves(
+            row,
+            col,
+            directions,
+            piece == "♖"
+        )
+
+
+    # -----------------------------
+    # BISHOPS
+    # -----------------------------
+    elif piece in "♗♝":
+
+        directions = [
+            (-1, -1),
+            (-1, 1),
+            (1, -1),
+            (1, 1)
+        ]
+
+        moves += get_sliding_moves(
+            row,
+            col,
+            directions,
+            piece == "♗"
+        )
+
+
+    # -----------------------------
+    # QUEENS
+    # -----------------------------
+    elif piece in "♕♛":
+
+        directions = [
+            (-1, 0),
+            (1, 0),
+            (0, -1),
+            (0, 1),
+
+            (-1, -1),
+            (-1, 1),
+            (1, -1),
+            (1, 1)
+        ]
+
+        moves += get_sliding_moves(
+            row,
+            col,
+            directions,
+            piece == "♕"
+        )
+    # -----------------------------
+    # KINGS
+    # -----------------------------
+    elif piece in "♔♚":
+
+        king_moves = [
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+
+            (0, -1),
+            (0, 1),
+
+            (1, -1),
+            (1, 0),
+            (1, 1)
+        ]
+
+        white_pieces = "♙♖♘♗♕♔"
+        black_pieces = "♟♜♞♝♛♚"
+
+        own_pieces = white_pieces if piece == "♔" else black_pieces
+
+        for row_change, col_change in king_moves:
+
+            new_row = row + row_change
+            new_col = col + col_change
+
+            if 0 <= new_row < 8 and 0 <= new_col < 8:
+
+                target = pieces[new_row][new_col]
+
+                if target == "" or target not in own_pieces:
+                    moves.append((new_row, new_col))
+    # -----------------------------
+    # CASTLING
+    # -----------------------------
+
+    # White king
+    if piece == "♔" and row == 7 and col == 4 and not white_king_moved:
+
+        # Kingside castle
+        if (
+            not white_right_rook_moved
+            and pieces[7][7] == "♖"
+            and pieces[7][5] == ""
+            and pieces[7][6] == ""
+        ):
+            moves.append((7, 6))
+
+        # Queenside castle
+        if (
+            not white_left_rook_moved
+            and pieces[7][0] == "♖"
+            and pieces[7][1] == ""
+            and pieces[7][2] == ""
+            and pieces[7][3] == ""
+        ):
+            moves.append((7, 2))
+
+
+    # Black king
+    if piece == "♚" and row == 0 and col == 4 and not black_king_moved:
+
+        # Kingside castle
+        if (
+            not black_right_rook_moved
+            and pieces[0][7] == "♜"
+            and pieces[0][5] == ""
+            and pieces[0][6] == ""
+        ):
+            moves.append((0, 6))
+
+        # Queenside castle
+        if (
+            not black_left_rook_moved
+            and pieces[0][0] == "♜"
+            and pieces[0][1] == ""
+            and pieces[0][2] == ""
+            and pieces[0][3] == ""
+        ):
+            moves.append((0, 2))
+    return moves
+def restart_game():
+
+    global pieces
+    global selected_square
+    global possible_moves
+    global en_passant_target
+    global current_turn
+
+    global white_king_moved
+    global black_king_moved
+    global white_left_rook_moved
+    global white_right_rook_moved
+    global black_left_rook_moved
+    global black_right_rook_moved
+
+    global promotion_pending
+    global promotion_square
+    global promotion_is_white
+
+    global game_over
+    global game_message
+
+    pieces = [
+        ["♜", "♞", "♝", "♛", "♚", "♝", "♞", "♜"],
+        ["♟", "♟", "♟", "♟", "♟", "♟", "♟", "♟"],
+        ["", "", "", "", "", "", "", ""],
+        ["", "", "", "", "", "", "", ""],
+        ["", "", "", "", "", "", "", ""],
+        ["", "", "", "", "", "", "", ""],
+        ["♙", "♙", "♙", "♙", "♙", "♙", "♙", "♙"],
+        ["♖", "♘", "♗", "♕", "♔", "♗", "♘", "♖"]
+    ]
+
+    selected_square = None
+    possible_moves = []
+    en_passant_target = None
+
+    current_turn = "white"
+
+    white_king_moved = False
+    black_king_moved = False
+
+    white_left_rook_moved = False
+    white_right_rook_moved = False
+
+    black_left_rook_moved = False
+    black_right_rook_moved = False
+
+    promotion_pending = False
+    promotion_square = None
+    promotion_is_white = True
+
+    game_over = False
+    game_message = "White to move"
+def forfeit_game():
+
+    global game_over
+    global game_message
+
+    if game_over:
+        return
+
+    game_over = True
+
+    if current_turn == "white":
+        game_message = "White forfeits - Black wins!"
+    else:
+        game_message = "Black forfeits - White wins!"
+# -----------------------------
+# Main loop
+# -----------------------------
+running = True
+while running:
+
+    clock.tick(60)
+
+    for event in pygame.event.get():
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:
+
+                if restart_button.collidepoint(event.pos):
+                    restart_game()
+
+                elif forfeit_button.collidepoint(event.pos):
+                    forfeit_game()
+
+                elif promotion_pending:
+                    handle_promotion_click(event.pos)
+
+                else:
+                    handle_click(event.pos)
+        if event.type == pygame.QUIT:
+            running = False
+
+    screen.fill(BACKGROUND)
+
+    draw_board()
+    draw_selection()
+    draw_possible_moves()
+    draw_coordinates()
+    draw_pieces()
+    draw_game_status()
+    draw_buttons()
+    draw_promotion_menu()
+
+    pygame.display.flip()
+pygame.quit()
